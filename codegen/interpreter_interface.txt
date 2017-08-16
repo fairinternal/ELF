@@ -1,0 +1,594 @@
+#include "interpreter_interface.h"
+#include "interpreter.h"
+#include <iostream>
+
+struct Handle {
+  InterpreterParams params;
+  Machine machine;
+  std::vector<int> init_reg;
+  std::random_device rd;
+  std::vector<std::vector<int> > memories;
+
+  int counter_after_redraw;
+
+  std::string _tmp_str;
+
+  std::vector<Instruction> code_pruned;
+  std::vector< std::vector<MachineState> > all_states;
+  std::vector< std::map<int, std::vector<int> > > pc2states;
+  std::map<std::string, long> stats;
+  long statsCount = 0;
+
+
+  Handle(const InterpreterParams *p)
+    : params(*p), machine(p->num_reg, p->size_memory), init_reg(p->num_reg), counter_after_redraw(0) {
+      std::fill(init_reg.begin(), init_reg.end(), 0);
+      init_reg[0] = p->size_memory;
+  }
+};
+
+void InitInterpreterParams(InterpreterParams *params) {
+  // The number of memory samples to draw.
+  params->num_memory_sample = 10;
+
+  // The size of memory.
+  params->size_memory = 10;
+
+  // The number of register to use.
+  params->num_reg = 4;
+
+  // Initial program length.
+  params->initial_program_length = 20;
+
+  // Return the program whose length is >= min_program_length_after_pruning.
+  params->min_program_length_after_pruning = 5;
+  params->max_program_length_after_pruning = 10;
+
+  // Each memory slot will be in [0, max_mem_item]
+  params->mem_upper_bound = 10;
+
+  // How many samples to draw before we proceed to the next program.
+  params->redraw_after_n = 3;
+
+  // How many instructions between two memories.
+  params->instruction_span = 2;
+
+  // Percent of memory sample picked.
+  // If num_memory_sample == 1, then the percent is always 100%.
+  params->percent_mem_picked = 50;
+
+  params->use_random_span = false;
+  params->use_first_memory = false;
+}
+
+void *InitInterpreter(const InterpreterParams *params) {
+  Handle *h = new Handle(params);
+  return h;
+}
+
+void destroyInterpreter(void *handle) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  delete h;
+}
+
+void PrintParams(void *handle) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  const InterpreterParams &params = h->params;
+  printf("num_memory_sample: %d\n", params.num_memory_sample);
+  printf("size_memory: %d\n", params.size_memory);
+  printf("percent_mem_picked: %d\n", params.percent_mem_picked);
+  printf("mem_upper_bound: %d\n", params.mem_upper_bound);
+
+  printf("num_register: %d\n", params.num_reg);
+  printf("init_program_length: %d\n", params.initial_program_length);
+  printf("min_program_length_after_pruning: %d\n", params.min_program_length_after_pruning);
+  printf("max_program_length_after_pruning: %d\n", params.max_program_length_after_pruning);
+  printf("redraw_after_n: %d\n", params.redraw_after_n);
+  printf("instruction_span: %d [random: %s]\n", params.instruction_span, params.use_random_span ? "true" : "false");
+  printf("Use first memory: %s\n", params.use_first_memory ? "true" : "false");
+}
+
+int GetMaxProgramLength(void *handle) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  const InterpreterParams &params = h->params;
+  return params.max_program_length_after_pruning;
+}
+
+const char *GetCurrentProgram(void *handle) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  h->_tmp_str = PrintInstructions(h->code_pruned);
+  return h->_tmp_str.c_str();
+}
+
+void GetInitMemory(void *handle, int i, int *m) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  std::copy(h->memories[i].begin(), h->memories[i].end(), m);
+}
+
+int GetNumMemorySample(void *handle) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  return h->params.num_memory_sample;
+}
+
+int GetMemoryUpperBound(void *handle) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  return h->params.mem_upper_bound;
+}
+
+int GetMemoryDim(void *handle) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  return h->params.size_memory;
+}
+
+int GetNumRegs(void *handle) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  return h->params.num_reg;
+}
+
+int GetEnsembleMachineStateDim(void *handle) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  // For now just #state * 2 (input memory state, output memory state).
+  return (h->params.size_memory + h->params.num_reg + 2) * 2;
+}
+
+int GetInstructionDim(void *handle) {
+  // Handle *h = reinterpret_cast<Handle *>(handle);
+  // ins_type + arg1 + arg2
+  return 3;
+}
+/*
+static void updateStats(Handle *h, std::vector<Instruction> code) {
+  //std::string ins = PrintInstructions(code);
+  for (Instruction i : code) {
+    std::string ins = i.Print();
+    h->statsCount ++;
+    if (h->stats.find(ins) != h->stats.end()) {
+      h->stats[ins] ++;
+    } else {
+      h->stats[ins] = 1;
+    }
+  }
+  if (h->statsCount % 10000 == 0) {
+    for(auto elem : h->stats)
+      if (elem.second > 1)
+        std::cout << elem.first << " " << elem.second << "\n";
+    std::cout << "current code total is " << h->statsCount << " span " << std::cout << h->params.min_program_length_after_pruning << "\n";
+  }
+}
+*/
+static void get_pruned_code(Handle *h, bool loop = true) {
+  while (true) {
+    std::vector<Instruction> codes = Machine::SampleCode(&h->rd, h->init_reg.size(), h->params.initial_program_length, loop);
+    bool is_valid = GreedyPrune(codes, h->init_reg, h->params.size_memory, h->params.num_memory_sample, &h->code_pruned);
+    if (is_valid && h->code_pruned.size() <= h->params.max_program_length_after_pruning && h->code_pruned.size() >= h->params.min_program_length_after_pruning) {
+      //updateStats(h, h->code_pruned);
+      break;
+    }
+  }
+}
+
+static int get_half_feature(Handle *h, int sample_idx, int state_idx, int *f) {
+  if (sample_idx < 0 || sample_idx >= h->all_states.size()) return 0;
+  if (state_idx < 0 || state_idx >= h->all_states[sample_idx].size()) return 0;
+
+  const MachineState &s = h->all_states[sample_idx][state_idx];
+  std::vector<int> f_ = s.GetFeature();
+  for (int i = 0; i < f_.size(); ++i) f[i] = f_[i];
+
+  return f_.size();
+}
+
+static bool get_feature(Handle *h, int sample_idx, int before_state_idx, int after_state_idx, int *f) {
+  int offset = get_half_feature(h, sample_idx, before_state_idx, f);
+  if (offset == 0) return false;
+
+  f += offset;
+  if (get_half_feature(h, sample_idx, after_state_idx, f) == 0) return false;
+
+  return true;
+}
+
+static void get_instruction_feature(Handle *h, int pc, int *target) {
+  std::vector<int> ins = h->code_pruned[pc].GetFeature();
+  for (int i = 0; i < ins.size(); ++i) target[i] = ins[i];
+}
+
+static void regenerate_memory(Handle *h, bool oo) {
+  std::mt19937 gen(h->rd());
+  std::uniform_int_distribution<> dis_mem(0, h->params.mem_upper_bound);
+
+  // Generate memory.
+  h->memories.resize(h->params.num_memory_sample);
+  for (int i = 0; i < h->params.num_memory_sample; ++i) {
+    h->memories[i].resize(h->params.size_memory);
+    if (oo) {
+      std::for_each(h->memories[i].begin(), h->memories[i].end(), [&](int &n) { n = dis_mem(gen) + 100; });
+    } else {
+      std::for_each(h->memories[i].begin(), h->memories[i].end(), [&](int &n) { n = dis_mem(gen); });
+    }
+  }
+}
+
+static void regenerate_memory(Handle *h) {
+  regenerate_memory(h, false);
+}
+
+static void reload_code(Handle *h) {
+  Machine &m = h->machine;
+
+  // Then you get the code and run on the memories.
+  m.Load(h->code_pruned);
+  m.SetDumpAll(true);
+
+  h->all_states.clear();
+  h->pc2states.clear();
+
+  for (int j = 0; j < h->memories.size(); j++) {
+    m.state().Init(h->init_reg, h->memories[j]);
+    m.Run();
+
+    h->all_states.push_back(m.all_states());
+    h->pc2states.push_back(m.pc2states());
+  }
+}
+
+const char *GetInstructionString(void *handle, int x1, int x2, int x3) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  Instruction ins((Instruction::InsType)x1, x2, x3);
+  h->_tmp_str = ins.Print();
+  return h->_tmp_str.c_str();
+}
+
+int get_memory_state_idx_at_pc(Handle *h, int pc, int mem_idx) {
+  std::mt19937 gen(h->rd());
+  std::uniform_int_distribution<> dis2(0, 32767);
+
+  auto it = h->pc2states[mem_idx].find(pc);
+  // For now just pick a random occurrence during execution.
+  if (it != h->pc2states[mem_idx].end()) {
+    int idx = (h->params.use_first_memory ? 0 : dis2(gen) % it->second.size());
+    return it->second[idx];
+  } else {
+    return -1;
+  }
+}
+
+void GenerateProgram(void *handle, int *mem_in, int *mem_out, int *code, const char* program = nullptr, bool regen = true) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  Machine &m = h->machine;
+
+  const int num_trial = 100;
+  bool retry = true;
+
+  for (int k = 0; k < num_trial; ++k) {
+    // clear all.
+    int d = GetEnsembleMachineStateDim(handle) / 2;
+    std::fill(mem_in, mem_in + d * h->memories.size(), 0);
+    std::fill(mem_out, mem_out + d * h->memories.size(), 0);
+    std::fill(code, code + h->params.max_program_length_after_pruning * GetInstructionDim(handle), -1);
+
+    if (program == nullptr) {
+      get_pruned_code(h, true);
+    } else {
+      h->code_pruned = Machine::LoadCodeFromString(std::string(program));
+    }
+    if (regen) {regenerate_memory(h);}
+    reload_code(h);
+    h->counter_after_redraw = 0;
+
+    retry = false;
+    for (int i = 0; i < h->memories.size() && ! retry; i++) {
+      int offset_in = get_half_feature(h, i, 0, mem_in);
+      int offset_out = get_half_feature(h, i, h->all_states[i].size() - 1, mem_out);
+      if (offset_in == 0 || offset_out == 0) retry = true;
+
+      mem_in += offset_in;
+      mem_out += offset_out;
+    }
+
+    if (! retry) {
+      // Also dump the code.
+      for (int i = 0; i < h->code_pruned.size(); ++i) {
+        std::vector<int> v = h->code_pruned[i].GetFeature();
+        std::copy(v.begin(), v.end(), code);
+        code += v.size();
+      }
+      break;
+    }
+  }
+
+  if (retry) {
+    std::cout << "Failed after " << num_trial << " retries! " << std::endl;
+    throw std::runtime_error("");
+  }
+}
+
+inline std::string getStr(const std::vector<Instruction> &program) {
+  std::stringstream ss;
+  for (int i = 0; i < program.size(); ++i) {
+    ss << program[i].Print() << ";";
+  }
+  return ss.str();
+}
+
+void GenerateProgram4(void *handle, int *i1, int* o1, int *m1, int* m2, int* tmp, int *code){
+  bool useLoop = false;
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  Machine &m = h->machine;
+    // clear all.
+  int d = GetEnsembleMachineStateDim(handle) / 2;
+  get_pruned_code(h, useLoop);
+  std::stringstream ss;
+  for (int i = 0; i < h->code_pruned.size(); ++i) {
+    ss << h->code_pruned[i].Print() << ";";
+  }
+  std::string s1 = ss.str();
+  int code_size = h->code_pruned.size();
+  GenerateProgram(h, i1, o1, code, s1.c_str());
+
+  std::mt19937 gen(h->rd());
+  std::uniform_int_distribution<> dis(1, Instruction::INS_TOTAL - 1);
+  std::uniform_int_distribution<> dis_reg(0, h->params.num_reg - 1);
+  std::uniform_int_distribution<> dis2(0, h->code_pruned.size() - 2);
+  int line = dis2(gen);
+  std::vector<Instruction> program;
+  for (int i = 0; i < line; i++) {
+    program.push_back(h->code_pruned[i]);
+  }
+  std::string s = h->code_pruned[line].Print();
+  std::string s2;
+  if (line > 0) {
+    s2 = getStr(program);
+    GenerateProgram(h, tmp, i1, code, s2.c_str(), false);
+  }
+
+  Instruction ins;
+  do {
+    ins.ins_type = (Instruction::InsType)dis(gen);
+    if (!useLoop) {
+      while (ins.ins_type == Instruction::INS_REP || ins.ins_type == Instruction::INS_CMP) {
+        ins.ins_type = (Instruction::InsType)dis(gen);
+      }
+    }
+    if (ins.ins_type <= Instruction::INS_BOUND_UNARY) {
+      ins.arg1 = dis_reg(gen);
+      ins.arg2 = -1;
+    } else {
+      do {
+        ins.arg1 = dis_reg(gen);
+        ins.arg2 = dis_reg(gen);
+      } while (ins.arg1 == ins.arg2);
+    }
+  } while (ins == h->code_pruned[line]);
+  std::string s3 = s2 + s;
+  GenerateProgram(h, tmp, m1, code, s3.c_str(), false);
+
+  std::string s4 = s2 + ins.Print();
+  GenerateProgram(h, tmp, m2, code, s4.c_str(), false);
+}
+
+void GenerateProgram3(void *handle, int *mi1, int *mo1, int *mi2, int *mo2, int *mi3, int *mo3, int* m4, int *code) {
+  bool useLoop = false;
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  Machine &m = h->machine;
+    // clear all.
+  int d = GetEnsembleMachineStateDim(handle) / 2;
+  get_pruned_code(h, useLoop);
+  std::stringstream ss;
+  for (int i = 0; i < h->code_pruned.size(); ++i) {
+    ss << h->code_pruned[i].Print() << ";";
+  }
+  std::string s3 = ss.str();
+  int code_size = h->code_pruned.size();
+  GenerateProgram(h, mi3, mo3, code, s3.c_str());
+
+  std::mt19937 gen(h->rd());
+  std::uniform_int_distribution<> dis(1, Instruction::INS_TOTAL - 1);
+  std::uniform_int_distribution<> dis_reg(0, h->params.num_reg - 1);
+
+  Instruction ins;
+  do {
+    ins.ins_type = (Instruction::InsType)dis(gen);
+    if (!useLoop) {
+      while (ins.ins_type == Instruction::INS_REP || ins.ins_type == Instruction::INS_CMP) {
+        ins.ins_type = (Instruction::InsType)dis(gen);
+      }
+    }
+    if (ins.ins_type <= Instruction::INS_BOUND_UNARY) {
+      ins.arg1 = dis_reg(gen);
+      ins.arg2 = -1;
+    } else {
+      do {
+        ins.arg1 = dis_reg(gen);
+        ins.arg2 = dis_reg(gen);
+      } while (ins.arg1 == ins.arg2);
+    }
+  } while (ins == h->code_pruned[0]);
+  GenerateProgram(h, mi3, m4, code, ins.Print().c_str(), false);
+
+  int index = s3.find(";");
+  std::string s1 = s3.substr(0, index);
+  GenerateProgram(h, mi1, mo1, code, s1.c_str(), false);
+  std::string s2 = s3.substr(index + 1);
+  GenerateProgram(h, mi2, mo2, code, s3.c_str());
+}
+
+void GenerateFeature(void *handle, int *f, int *target) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  Machine &m = h->machine;
+
+  // clear all.
+  int d = GetEnsembleMachineStateDim(handle);
+  int minimal_mem_picked = (h->params.num_memory_sample == 1 ? 1 : (h->params.percent_mem_picked * h->params.num_memory_sample + 99) / 100);
+  std::fill(f, f + d * h->memories.size(), 0);
+
+  while (true) {
+    if (h->counter_after_redraw >= h->params.redraw_after_n || h->code_pruned.empty()) {
+      get_pruned_code(h);
+      regenerate_memory(h);
+      reload_code(h);
+      h->counter_after_redraw = 0;
+    }
+
+    // For an instruction, it will have multiple memories footprint (before and after).
+    std::mt19937 gen(h->rd());
+    std::uniform_int_distribution<> dis(0, h->code_pruned.size() - 1);
+    std::uniform_int_distribution<> dis_span(1, h->params.instruction_span);
+
+    // std::uniform_int_distribution<> dis_sample(0, h->memories.size() - 1);
+    std::uniform_int_distribution<> dis2(0, 32767);
+    h->counter_after_redraw ++;
+
+    const int num_trial = 100;
+    for (int i = 0; i < num_trial; ++i) {
+      int pc = dis(gen);
+      // int j = dis_sample(gen);
+      int mem_picked = 0;
+      for (int j = 0; j < h->memories.size(); j++) {
+        int before_state_idx = get_memory_state_idx_at_pc(h, pc, j);
+        if (before_state_idx < 0) continue;
+        int after_pc = pc + (h->params.use_random_span ? dis_span(gen) : h->params.instruction_span);
+        int after_state_idx = get_memory_state_idx_at_pc(h, after_pc, j);
+        if (after_state_idx < 0) continue;
+        if (get_feature(h, j, before_state_idx, after_state_idx, f + d * j))
+          mem_picked ++;
+      }
+
+      if (mem_picked >= minimal_mem_picked) {
+        get_instruction_feature(h, pc, target);
+        return;
+      }
+    }
+
+    // redraw
+    h->counter_after_redraw = h->params.redraw_after_n;
+  }
+}
+
+void GenerateFeaturePredictSpan(void *handle, int *f, int *target) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  Machine &m = h->machine;
+
+  // clear all.
+  int d = GetEnsembleMachineStateDim(handle);
+  int minimal_mem_picked = (h->params.num_memory_sample == 1 ? 1 : (h->params.percent_mem_picked * h->params.num_memory_sample + 99) / 100);
+  std::fill(f, f + d * h->memories.size(), 0);
+
+  while (true) {
+    if (h->counter_after_redraw >= h->params.redraw_after_n || h->code_pruned.empty()) {
+      get_pruned_code(h);
+      regenerate_memory(h);
+      reload_code(h);
+      h->counter_after_redraw = 0;
+    }
+
+    // For an instruction, it will have multiple memories footprint (before and after).
+    std::mt19937 gen(h->rd());
+    // Note that we also want to sample the code AFTER the final line.
+    // This allows us to sample the memory after the code completes.
+    std::uniform_int_distribution<> dis_ins(0, h->code_pruned.size());
+
+    h->counter_after_redraw ++;
+    const int num_trial = 100;
+    bool passed = false;
+    int pc1, pc2;
+
+    for (int i = 0; i < num_trial && ! passed; ++i) {
+      while (! passed) {
+        pc1 = dis_ins(gen);
+        pc2 = dis_ins(gen);
+        if (pc1 == pc2) continue;
+        if (pc1 > pc2) std::swap(pc1, pc2);
+
+        // Return the memory before pc1 and before pc2.
+        passed = true;
+        for (int j = 0; j < h->memories.size(); ++j) {
+          int idx1 = get_memory_state_idx_at_pc(h, pc1, j);
+          int idx2 = get_memory_state_idx_at_pc(h, pc2, j);
+          if (idx1 < 0 || idx2 < 0 || ! get_feature(h, j, idx1, idx2, f + d * j)) {
+            passed = false;
+            break;
+          }
+        }
+      }
+    }
+
+    if (passed) {
+      *target = pc2 - pc1;
+      break;
+    }
+
+    // redraw code.
+    h->counter_after_redraw = h->params.redraw_after_n;
+  }
+}
+
+int LoadCodeFromString(void *handle, const char *s, bool regen, bool oo) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  h->code_pruned = Machine::LoadCodeFromString(std::string(s));
+  //if (h->code_pruned.empty()) return -1;
+  if (regen) {
+    regenerate_memory(h, oo);
+  }
+  reload_code(h);
+  return 0;
+}
+
+int LoadCode(void *handle, const char *filename) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  h->code_pruned = Machine::LoadCode(std::string(filename));
+  if (h->code_pruned.empty()) return -1;
+  regenerate_memory(h);
+  reload_code(h);
+  return 0;
+}
+
+// Given the instruction index, return its first encountered state, as well as the state after the program completes.
+void GetInitFinalFeature(void *handle, int ins_idx, int *f) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  int d = GetEnsembleMachineStateDim(handle);
+  std::fill(f, f + d * h->memories.size(), 0);
+  for (int i = 0; i < h->memories.size(); ++i) {
+    auto it = h->pc2states[i].find(ins_idx);
+    if (it == h->pc2states[i].end()) continue;
+
+    // Get the first memory state.
+    int before_state_idx = it->second[0];
+    int after_state_idx = h->all_states[i].size() - 1;
+    get_feature(h, i, before_state_idx, after_state_idx, f + d * i);
+  }
+  fflush(stdout);
+}
+
+int GetNumInstructions(void *handle) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  return h->code_pruned.size();
+}
+
+int GetNumInstructionType(void *handle) {
+  return Instruction::INS_TOTAL;
+}
+
+void GetInstructionFeature(void *handle, int pc, int *f) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  std::vector<int> feature = h->code_pruned[pc].GetFeature();
+  for (int i = 0; i < feature.size(); ++i) f[i] = feature[i];
+}
+
+const char *EnumerateInstructions(void *handle, int line_idx, int num_lines) {
+  Handle *h = reinterpret_cast<Handle *>(handle);
+  std::vector<Instruction> ins = Machine::EnumerateInstructions(line_idx, h->machine.state().reg().size(), num_lines);
+
+  // Pretty inefficient.
+  std::stringstream ss;
+  for (int i = 0; i < ins.size(); ++i) {
+    std::vector<int> rep = ins[i].GetFeature();
+    for (int j = 0; j < rep.size(); ++j) {
+      ss << rep[j];
+      if (j < rep.size() - 1) ss << " ";
+    }
+    if (i < ins.size() - 1) ss << ";";
+  }
+  h->_tmp_str = ss.str();
+  return h->_tmp_str.c_str();
+}
