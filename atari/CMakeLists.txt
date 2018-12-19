@@ -13,12 +13,16 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native")
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../elf/ ${CMAKE_BINARY_DIR}/elf/)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../vendor/ ${CMAKE_BINARY_DIR}/vendor/)
 
-# add ALE
-find_package(PkgConfig)
-pkg_check_modules(ALE REQUIRED ale)
+set(ALE_INCLUDE_DIRS
+    ./Arcade-Learning-Environment/src
+)
+
+set(ALE_LIBRARY_DIRS
+    ./Arcade-Learning-Environment
+)
+
 include_directories(SYSTEM ${ALE_INCLUDE_DIRS})
 link_directories(${ALE_LIBRARY_DIRS})
-
 
 # the python lib
 file(GLOB SOURCES *.cc)
