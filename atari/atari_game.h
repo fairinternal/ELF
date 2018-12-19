@@ -12,7 +12,7 @@
 #pragma once
 
 #include <vector>
-#include <ale/ale_interface.hpp>
+#include <ale_interface.hpp>
 #include <string>
 
 #include "elf/pybind_helper.h"

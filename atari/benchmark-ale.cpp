@@ -25,7 +25,7 @@
 #include <memory>
 #include <condition_variable>
 #include <mutex>
-#include <ale/ale_interface.hpp>
+#include <ale_interface.hpp>
 #include <atomic>
 
 #include "timer.hh"

@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include <ale/ale_interface.hpp>
+#include <ale_interface.hpp>
 
 #include "elf/pybind_helper.h"
 #include "elf/comm_template.h"

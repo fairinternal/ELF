@@ -12,6 +12,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native")
 # add elf and vendor
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../elf/ ${CMAKE_BINARY_DIR}/elf/)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../vendor/ ${CMAKE_BINARY_DIR}/vendor/)
+# add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../vendor/tbb/include ${CMAKE_BINARY_DIR}/vendor/tbb/include)
 
 set(ALE_INCLUDE_DIRS
     ./Arcade-Learning-Environment/src
