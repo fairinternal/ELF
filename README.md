@@ -73,7 +73,7 @@ Please check `train.py` and `eval.py` for actual runnable codes.
 
 Dependency    
 ===============
-C++ compiler with C++11 support (e.g., gcc >= 4.9) is required. The following libraries are required `tbb`. CMake is also required.
+C++ compiler with C++11 support (e.g., gcc >= 4.9) is required. The following libraries are required `tbb` (can be installed with `sudo yum install tbb-devel` in CentOS). CMake is also required.
 
 Python 3.x is required. In addition, you need to install following package: [PyTorch](http://pytorch.org/) version 0.2.0+, `tqdm`, `zmq`, `msgpack`, `msgpack_numpy`
 

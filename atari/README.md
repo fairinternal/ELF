@@ -7,7 +7,9 @@ The simulator is similar to OpenAI Gym "-v0" setting, in which we apply the same
 
 Compilation
 ===================
-First, install Arcade Learning Environment ([ALE](https://github.com/mgbellemare/Arcade-Learning-Environment)).
+First, compile ALE in ALE folder (`submodule update` if necessary). 
+
+Install tbb with `yum install tbb-devel`.
 
 Then `mkdir build && cd build && cmake .. && make`. This should build a dynamic libraries under `ELF/atari/`.
 
