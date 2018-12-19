@@ -33,6 +33,6 @@ class ModelLoader:
             model.load(args.load)
 
         if args.gpu is not None and args.gpu >= 0:
-            model.cuda(device_id=args.gpu)
+            model.cuda(args.gpu)
 
         return model

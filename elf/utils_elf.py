@@ -104,7 +104,12 @@ class Batch:
                 elif isinstance(v, (int, float)):
                     bk.fill_(v)
                 else:
-                    bk[:] = v
+                    try:
+                        bk[:] = v.squeeze_()
+                    except BaseException:
+                        print("Key: " + k)
+                        import pdb
+                        pdb.set_trace()
 
     def cpu2gpu(self, gpu=0):
         return Batch(**{ k : v.cuda(gpu) for k, v in self.batch.items() })

@@ -42,7 +42,7 @@ class Model_ActorCritic(Model):
 
         self.policy_branch = nn.Linear(512, params["num_action"])
         self.value_branch = nn.Linear(512, 1)
-        self.softmax = nn.Softmax()
+        self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
         # Get the last hist_len frames.

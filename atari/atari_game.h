@@ -14,6 +14,8 @@
 #include <vector>
 #include <ale_interface.hpp>
 #include <string>
+#include <iostream>
+#include <iomanip>
 
 #include "elf/pybind_helper.h"
 #include "elf/comm_template.h"
@@ -74,7 +76,7 @@ class AtariGame {
     AtariGame(const GameOptions&);
 
     void initialize_comm(int game_idx, AIComm* ai_comm) {
-      assert(!_ai_comm);
+      assert(ai_comm != nullptr);
       _ai_comm = ai_comm;
       _game_idx = game_idx;
     }
