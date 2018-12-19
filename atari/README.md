@@ -30,7 +30,7 @@ To train a model in atari game, go to `[root directory]` and run the following c
 
 ```bash
 game=./atari/game model=actor_critic model_file=./atari/model \
-python3 run.py
+python3 train.py
     --rom_file [your rom]
     -—batchsize 128         # Batchsize
     —-freq_update 50        # How often the actor used to predict the action gets updated.
@@ -46,7 +46,7 @@ To evaluate, try the following command:
 
 ```bash
 eval_only=1 game=./atari/game model=actor_critic model_file=./atari/model \
-python3 run.py
+python3 eval.py
     --num_games 128 --batchsize 32 --tqdm --eval_gpu [your gpu id]
     --rom_file [your rom]
     --load [your model]
