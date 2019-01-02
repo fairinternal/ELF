@@ -7,7 +7,7 @@ The simulator is similar to OpenAI Gym "-v0" setting, in which we apply the same
 
 Compilation
 ===================
-First, compile ALE in ALE folder (`submodule update` if necessary). 
+First, compile ALE in ALE folder (`submodule update` if necessary): `mkdir build; cd build; cmake -DUSE_SDL=OFF -DUSE_RLGLUE=OFF -DBUILD_EXAMPLES=OFF ..; make` 
 
 Install tbb with `yum install tbb-devel`.
 
